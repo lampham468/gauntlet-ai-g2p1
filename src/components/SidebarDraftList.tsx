@@ -5,6 +5,16 @@ import type React from "react"
 import { FileText, Clock, Search, Plus, Trash2, TrashIcon } from "lucide-react"
 import { useState } from "react"
 
+// Local interface to match the store's Draft interface
+interface Draft {
+  id: string
+  title: string
+  content: string
+  createdAt: Date
+  updatedAt: Date
+  isLocal?: boolean
+}
+
 interface SidebarDraftListProps {
   onDraftSelect?: (draftId: string) => void | Promise<void>
   onNewDraft?: () => void | Promise<void>
@@ -133,15 +143,22 @@ export function SidebarDraftList({ onDraftSelect, onNewDraft, onDraftDelete, cla
                     }`}
                   />
                   <div className="flex-1 min-w-0">
-                    <h4
-                      className={`font-medium truncate ${
-                        activeDraftId === draft.id
-                          ? "text-blue-900 dark:text-blue-100"
-                          : "text-gray-900 dark:text-white"
-                      }`}
-                    >
-                      {draft.title}
-                    </h4>
+                    <div className="flex items-center space-x-2">
+                      <h4
+                        className={`font-medium truncate ${
+                          activeDraftId === draft.id
+                            ? "text-blue-900 dark:text-blue-100"
+                            : "text-gray-900 dark:text-white"
+                        }`}
+                      >
+                        {draft.title}
+                      </h4>
+                      {draft.isLocal && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">
+                          Local
+                        </span>
+                      )}
+                    </div>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">
                       {draft.content.substring(0, 80)}...
                     </p>

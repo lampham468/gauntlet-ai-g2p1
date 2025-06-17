@@ -233,17 +233,28 @@ function App() {
         
         if (isEmpty && deleteIfEmpty) {
           // Delete empty drafts only when explicitly switching to another item
-          console.log('Deleting empty draft:', activeDraftId)
+          console.log('Deleting empty draft:', activeDraftId, currentDraft.isLocal ? '(local)' : '(persisted)')
           await deleteDraft(activeDraftId)
-        } else if (hasUnsavedChanges) {
-          // Auto-save drafts with changes
-          console.log('Auto-saving draft with changes:', activeDraftId)
-          await updateDraft(activeDraftId, editorTitle, editorContent)
-          setHasUnsavedChanges(false)
+        } else if (hasUnsavedChanges || currentDraft.isLocal) {
+          // Auto-save drafts with changes OR persist local drafts with content
+          if (currentDraft.isLocal) {
+            console.log('Persisting local draft with content:', activeDraftId)
+            try {
+              await saveDraft(editorTitle, editorContent, activeDraftId)
+              setHasUnsavedChanges(false)
+            } catch (error) {
+              console.error('Failed to persist local draft:', error)
+              // Continue without throwing - the draft will remain local
+            }
+          } else {
+            console.log('Auto-saving persisted draft with changes:', activeDraftId)
+            await updateDraft(activeDraftId, editorTitle, editorContent)
+            setHasUnsavedChanges(false)
+          }
         }
       }
     }
-  }, [activeDraftId, getDraftById, editorTitle, editorContent, hasUnsavedChanges, deleteDraft, updateDraft])
+  }, [activeDraftId, getDraftById, editorTitle, editorContent, hasUnsavedChanges, deleteDraft, updateDraft, saveDraft])
 
   const handleNewDraft = useCallback(async () => {
     try {
@@ -267,7 +278,7 @@ function App() {
         await handleDraftDeselection(false) // Don't delete empty drafts when creating new
       }
       
-      const newId = await createNewDraft()
+      const newId = createNewDraft() // Now synchronous - creates local draft
       setEditorTitle("Untitled document")
       setEditorContent("")
       setActiveDraft(newId)
@@ -296,24 +307,50 @@ function App() {
           
           console.log('All data loaded successfully')
           
-          // After data is loaded, create a new draft if no active draft
+          // After data is loaded, create a new local draft if no active draft
           if (!activeDraftId) {
-            console.log('No active draft, creating new draft for fresh login...')
-            handleNewDraft()
+            console.log('No active draft, creating new local draft for fresh login...')
+            handleNewDraft()  // This now creates a local draft instantly
           }
         } catch (error) {
           console.error('Error loading user data:', error)
           // Don't block the UI, just log the error
-          // Still create a new draft even if data loading fails
+          // Still create a new local draft even if data loading fails
           if (!activeDraftId) {
-            console.log('Creating new draft despite data loading error...')
-            handleNewDraft()
+            console.log('Creating new local draft despite data loading error...')
+            handleNewDraft()  // This now creates a local draft instantly
           }
         }
       }
       loadData()
     }
   }, [user, authLoading, activeDraftId, handleNewDraft, loadDrafts, loadSentMessages])
+
+  // Handle browser beforeunload to persist local drafts
+  useEffect(() => {
+    const handleBeforeUnload = async (event: BeforeUnloadEvent) => {
+      if (activeDraftId) {
+        const currentDraft = getDraftById(activeDraftId)
+        if (currentDraft?.isLocal) {
+          // Check if there's meaningful content to save
+          const hasContent = (editorTitle.trim() !== "Untitled document" && editorTitle.trim() !== "") || 
+                             editorContent.trim() !== ""
+          
+          if (hasContent) {
+            // Try to persist the draft before page unload
+            try {
+              await saveDraft(editorTitle, editorContent, activeDraftId)
+            } catch (error) {
+              console.error('Failed to save draft before page unload:', error)
+            }
+          }
+        }
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [activeDraftId, getDraftById, editorTitle, editorContent, saveDraft])
 
   const handleLogout = async () => {
     try {

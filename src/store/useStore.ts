@@ -11,6 +11,7 @@ interface Draft {
   content: string
   createdAt: Date
   updatedAt: Date
+  isLocal?: boolean // New flag to track local-only drafts
 }
 
 interface SentMessage {
@@ -71,7 +72,9 @@ interface AppState {
   getDraftById: (id: string) => Draft | undefined
   saveDraft: (title: string, content: string, id?: string) => Promise<string>
   updateDraft: (id: string, title: string, content: string) => Promise<void>
-  createNewDraft: () => Promise<string>
+  createNewDraft: () => string // Changed to sync since it's now local-only
+  createLocalDraft: () => string // New method for creating local drafts
+  persistDraft: (id: string) => Promise<string> // New method to persist local drafts
   deleteDraft: (id: string) => Promise<void>
   isDraftEmpty: (id: string) => boolean
   loadDrafts: () => Promise<void>
@@ -189,19 +192,55 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  createNewDraft: async () => {
-    try {
-      const supabaseDraft = await DraftsService.createDraft()
-      const newDraft = convertSupabaseDraft(supabaseDraft)
+  createNewDraft: () => {
+    // Create a local draft without database persistence
+    const newId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const newDraft: Draft = {
+      id: newId,
+      title: "Untitled document",
+      content: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      isLocal: true
+    }
 
+    set((state) => ({
+      drafts: [newDraft, ...state.drafts],
+      activeDraftId: newDraft.id,
+    }))
+
+    return newDraft.id
+  },
+
+  createLocalDraft: () => {
+    // Alias for createNewDraft for backwards compatibility
+    return get().createNewDraft()
+  },
+
+  persistDraft: async (id: string) => {
+    const state = get()
+    const localDraft = state.drafts.find(draft => draft.id === id && draft.isLocal)
+    
+    if (!localDraft) {
+      throw new Error("Draft not found or already persisted")
+    }
+
+    try {
+      // Create the draft in the database
+      const supabaseDraft = await DraftsService.createDraft(localDraft.title, localDraft.content)
+      const persistedDraft = convertSupabaseDraft(supabaseDraft)
+
+      // Replace the local draft with the persisted one
       set((state) => ({
-        drafts: [newDraft, ...state.drafts],
-        activeDraftId: newDraft.id,
+        drafts: state.drafts.map(draft => 
+          draft.id === id ? persistedDraft : draft
+        ),
+        activeDraftId: state.activeDraftId === id ? persistedDraft.id : state.activeDraftId
       }))
 
-      return newDraft.id
+      return persistedDraft.id
     } catch (error) {
-      console.error("Failed to create draft:", error)
+      console.error("Failed to persist draft:", error)
       throw error
     }
   },
@@ -209,17 +248,41 @@ export const useStore = create<AppState>((set, get) => ({
   saveDraft: async (title: string, content: string, id?: string) => {
     try {
       if (id) {
-        // Update existing draft
-        const supabaseDraft = await DraftsService.updateDraft(id, title, content)
-        const updatedDraft = convertSupabaseDraft(supabaseDraft)
+        const state = get()
+        const draft = state.drafts.find(d => d.id === id)
+        
+        if (draft?.isLocal) {
+          // For local drafts, just update locally first
+          const updatedDraft: Draft = {
+            ...draft,
+            title,
+            content,
+            updatedAt: new Date()
+          }
+          
+          set((state) => ({
+            drafts: state.drafts.map((d) => (d.id === id ? updatedDraft : d)),
+          }))
 
-        set((state) => ({
-          drafts: state.drafts.map((draft) => (draft.id === id ? updatedDraft : draft)),
-        }))
+          // If there's actual content, persist to database
+          if (title.trim() !== "Untitled document" && title.trim() !== "" || content.trim() !== "") {
+            return await get().persistDraft(id)
+          }
+          
+          return id
+        } else {
+          // Update existing persisted draft
+          const supabaseDraft = await DraftsService.updateDraft(id, title, content)
+          const updatedDraft = convertSupabaseDraft(supabaseDraft)
 
-        return id
+          set((state) => ({
+            drafts: state.drafts.map((draft) => (draft.id === id ? updatedDraft : draft)),
+          }))
+
+          return id
+        }
       } else {
-        // Create new draft
+        // Create new draft - should rarely happen now since we use createNewDraft first
         const supabaseDraft = await DraftsService.createDraft(title, content)
         const newDraft = convertSupabaseDraft(supabaseDraft)
 
@@ -237,30 +300,70 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   updateDraft: async (id: string, title: string, content: string) => {
-    try {
-      const supabaseDraft = await DraftsService.updateDraft(id, title, content)
-      const updatedDraft = convertSupabaseDraft(supabaseDraft)
-
+    const state = get()
+    const draft = state.drafts.find(d => d.id === id)
+    
+    if (draft?.isLocal) {
+      // For local drafts, just update locally
+      const updatedDraft: Draft = {
+        ...draft,
+        title,
+        content,
+        updatedAt: new Date()
+      }
+      
       set((state) => ({
-        drafts: state.drafts.map((draft) => (draft.id === id ? updatedDraft : draft)),
+        drafts: state.drafts.map((d) => (d.id === id ? updatedDraft : d)),
       }))
-    } catch (error) {
-      console.error("Failed to update draft:", error)
-      throw error
+      
+      // Auto-persist if there's meaningful content
+      if ((title.trim() !== "Untitled document" && title.trim() !== "") || content.trim() !== "") {
+        try {
+          await get().persistDraft(id)
+        } catch (error) {
+          console.error("Failed to auto-persist draft:", error)
+          // Continue without throwing - local changes are still saved
+        }
+      }
+    } else {
+      // Update persisted draft
+      try {
+        const supabaseDraft = await DraftsService.updateDraft(id, title, content)
+        const updatedDraft = convertSupabaseDraft(supabaseDraft)
+
+        set((state) => ({
+          drafts: state.drafts.map((draft) => (draft.id === id ? updatedDraft : draft)),
+        }))
+      } catch (error) {
+        console.error("Failed to update draft:", error)
+        throw error
+      }
     }
   },
 
   deleteDraft: async (id: string) => {
-    try {
-      await DraftsService.deleteDraft(id)
-
+    const state = get()
+    const draft = state.drafts.find(d => d.id === id)
+    
+    if (draft?.isLocal) {
+      // For local drafts, just remove from state
       set((state) => ({
         drafts: state.drafts.filter((draft) => draft.id !== id),
         activeDraftId: state.activeDraftId === id ? null : state.activeDraftId,
       }))
-    } catch (error) {
-      console.error("Failed to delete draft:", error)
-      throw error
+    } else {
+      // Delete persisted draft
+      try {
+        await DraftsService.deleteDraft(id)
+
+        set((state) => ({
+          drafts: state.drafts.filter((draft) => draft.id !== id),
+          activeDraftId: state.activeDraftId === id ? null : state.activeDraftId,
+        }))
+      } catch (error) {
+        console.error("Failed to delete draft:", error)
+        throw error
+      }
     }
   },
 
