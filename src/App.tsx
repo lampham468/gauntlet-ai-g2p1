@@ -11,10 +11,6 @@ import { useAuth, authHelpers } from "./hooks/useAuth"
 import { supabase } from "./lib/supabase"
 import { EmailInput } from './components/EmailInput'
 
-interface User {
-  email: string
-}
-
 function App() {
   const { user: authUser, loading: authLoading } = useAuth()
   const user = authUser ? { email: authUser.email || '' } : null
@@ -44,8 +40,6 @@ function App() {
   const dataLoadedForUserRef = useRef<string | null>(null)
 
   const {
-    drafts,
-    sentMessages,
     activeDraftId,
     activeSentId,
     setActiveDraft,
@@ -60,8 +54,6 @@ function App() {
     loadDrafts,
     loadSentMessages,
     deleteSentMessage,
-    isLoadingDrafts,
-    isLoadingSentMessages,
     clearUserData,
   } = useStore()
 
@@ -390,20 +382,6 @@ function App() {
       }
     } catch (error) {
       console.error('Error deleting draft:', error)
-    }
-  }
-
-  const handleDeleteSent = async (id: string) => {
-    try {
-      await deleteSentMessage(id)
-      if (activeSentId === id) {
-        setEditorTitle("Untitled document")
-        setEditorContent("")
-        setActiveSent("")
-        setHasUnsavedChanges(false)
-      }
-    } catch (error) {
-      console.error('Error deleting sent message:', error)
     }
   }
 
