@@ -10,11 +10,12 @@ interface GrammarSidebarProps {
 }
 
 export function GrammarSidebar({ content, className = "" }: GrammarSidebarProps) {
-  const { grammarSuggestions, isCheckingGrammar, clearGrammarSuggestions, applySuggestion } = useStore()
-
+  const { grammarSuggestions, isCheckingGrammar, clearGrammarSuggestions, applySuggestion, setHoveredSuggestion } = useStore()
+  
   useEffect(() => {
-    // Clear suggestions when the content changes to avoid showing stale results
-    clearGrammarSuggestions()
+    // Only clear grammar/clarity suggestions when content changes significantly
+    // Keep spelling suggestions as they're real-time and position-tracked
+    // TODO: Implement smarter clearing based on suggestion source and position
   }, [content, clearGrammarSuggestions])
 
   const getIssueIcon = (type: Suggestion["type"]) => {
@@ -65,7 +66,7 @@ export function GrammarSidebar({ content, className = "" }: GrammarSidebarProps)
       {isCheckingGrammar && (
         <div className="flex items-center space-x-2 mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-          <span className="text-sm text-blue-700 dark:text-blue-300">Checking for suggestions...</span>
+          <span className="text-sm text-blue-700 dark:text-blue-300">Analyzing clarity and tone...</span>
         </div>
       )}
 
@@ -85,7 +86,9 @@ export function GrammarSidebar({ content, className = "" }: GrammarSidebarProps)
           grammarSuggestions.map((issue) => (
             <div
               key={issue.id}
-              className={`p-3 rounded-lg border ${getIssueColor(issue.type)} transition-all duration-200 hover:shadow-sm`}
+              className={`p-3 rounded-lg border ${getIssueColor(issue.type)} transition-all duration-200 hover:shadow-sm cursor-pointer`}
+              onMouseEnter={() => setHoveredSuggestion(issue.id)}
+              onMouseLeave={() => setHoveredSuggestion(null)}
             >
               <div className="flex items-start space-x-2">
                 {getIssueIcon(issue.type)}
@@ -106,12 +109,15 @@ export function GrammarSidebar({ content, className = "" }: GrammarSidebarProps)
                       Original: "{issue.original}"
                     </div>
                   )}
-                  <button
-                    onClick={() => applySuggestion(issue.id)}
-                    className="mt-3 w-full text-left px-3 py-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded-md transition-all"
-                  >
-                    Apply Suggestion
-                  </button>
+                  {/* Only show Apply button if there's actually a different suggestion */}
+                  {issue.original !== issue.suggestion && (
+                    <button
+                      onClick={() => applySuggestion(issue.id)}
+                      className="mt-3 w-full text-left px-3 py-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded-md transition-all"
+                    >
+                      Apply Suggestion
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

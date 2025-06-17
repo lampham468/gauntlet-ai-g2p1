@@ -43,26 +43,86 @@ export function RichTextEditor({
   const [content, setContent] = useState(text)
   const [documentTitle, setDocumentTitle] = useState(title)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [hasInitialLoad, setHasInitialLoad] = useState(false)
+  const [lastClarityCheckContent, setLastClarityCheckContent] = useState<string>("")
+  const [previousContent, setPreviousContent] = useState<string>(text) // Track previous content for change detection
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const highlightRef = useRef<HTMLDivElement>(null)
   const checkGrammar = useStore((state) => state.checkGrammar)
+  const checkSpelling = useStore((state) => state.checkSpelling)
+  const checkClarity = useStore((state) => state.checkClarity)
+  const cleanupInvalidSuggestions = useStore((state) => state.cleanupInvalidSuggestions)
+  const invalidateSuggestionsOnEdit = useStore((state) => state.invalidateSuggestionsOnEdit)
+  const hoveredSuggestionId = useStore((state) => state.hoveredSuggestionId)
+  const grammarSuggestions = useStore((state) => state.grammarSuggestions)
+  const canUndo = useStore((state) => state.canUndo)
+  const undoLastSuggestion = useStore((state) => state.undoLastSuggestion)
+  const cursorPosition = useStore((state) => state.cursorPosition)
+  const setCursorPosition = useStore((state) => state.setCursorPosition)
 
-  // Debounce for grammar check
+  // Check if we should show the highlight overlay
+  const shouldShowHighlight = useCallback(() => {
+    return hoveredSuggestionId && grammarSuggestions.some(s => s.id === hoveredSuggestionId)
+  }, [hoveredSuggestionId, grammarSuggestions])
+
+  // Immediate spell checking on every keystroke (< 50ms target)
+  // Also invalidate suggestions when text is edited
   useEffect(() => {
-    const handler = setTimeout(() => {
-      if (content.trim().length > 10) { // Only check if there's enough content
-        checkGrammar(content)
+    if (content.trim().length > 0 && !readOnly) {
+      // Invalidate suggestions based on text changes (more aggressive than cleanup)
+      if (previousContent !== content) {
+        invalidateSuggestionsOnEdit(previousContent, content)
+        setPreviousContent(content)
       }
-    }, 1500) // 1.5-second delay
-
-    return () => {
-      clearTimeout(handler)
+      
+      checkSpelling(content).catch(error => {
+        console.error('Spell check failed:', error)
+      })
     }
-  }, [content, checkGrammar])
+  }, [content, checkSpelling, invalidateSuggestionsOnEdit, previousContent, readOnly])
+
+  // Debounced clarity checking (triggers after 400ms of no typing - optimal for UX)
+  // Only triggers on initial load or after user edits, not continuously
+  useEffect(() => {
+    if (content.trim().length > 20 && !readOnly) {
+      // Skip if content hasn't changed since last check (avoid redundant API calls)
+      if (content === lastClarityCheckContent) {
+        return
+      }
+
+      // On initial load, check immediately (but still debounced to avoid rapid successive loads)
+      const delay = hasInitialLoad ? 400 : 100
+
+      const clarityTimer = setTimeout(() => {
+        console.log('🔍 RichTextEditor: triggering clarity check for:', content.substring(0, 30) + '...')
+        setLastClarityCheckContent(content)
+        checkClarity(content).catch(error => {
+          console.error('Clarity check failed:', error)
+        })
+      }, delay)
+
+      return () => clearTimeout(clarityTimer)
+    }
+  }, [content, checkClarity, readOnly, hasInitialLoad, lastClarityCheckContent])
+
+  // DISABLED: Grammar checking for now - focusing on spell checking only
+  // useEffect(() => {
+  //   if (content.trim().length > 5 && !readOnly) {
+  //     console.log('🔍 RichTextEditor: triggering grammar check for:', content.substring(0, 30) + '...')
+  //     checkGrammar(content)
+  //   }
+  // }, [content, checkGrammar, readOnly])
 
   // Update local state when props change
   useEffect(() => {
     setContent(text)
+    setPreviousContent(text) // Update previous content when props change
     setHasUnsavedChanges(false)
+    // Mark as initial load when content is set from props (e.g., loading a draft/sent message)
+    if (text.trim().length > 0) {
+      setHasInitialLoad(true)
+      setLastClarityCheckContent("") // Reset to trigger clarity check on load
+    }
   }, [text])
 
   useEffect(() => {
@@ -72,6 +132,7 @@ export function RichTextEditor({
 
   const adjustTextareaHeight = useCallback(() => {
     const textarea = textareaRef.current
+    const highlight = highlightRef.current
     if (textarea) {
       // Reset height to auto to get the correct scrollHeight
       textarea.style.height = "auto"
@@ -89,21 +150,68 @@ export function RichTextEditor({
         textarea.style.height = `${maxHeight}px`
         textarea.style.overflowY = "auto"
       }
+
+      // Sync highlight overlay dimensions (only when it's visible)
+      if (highlight && shouldShowHighlight()) {
+        highlight.style.height = textarea.style.height
+        highlight.style.overflowY = textarea.style.overflowY
+      }
     }
-  }, [])
+  }, [shouldShowHighlight])
+
+  // Generate highlighted text for the overlay
+  const getHighlightedText = useCallback(() => {
+    if (!shouldShowHighlight() || !content) {
+      return content
+    }
+
+    const hoveredSuggestion = grammarSuggestions.find(s => s.id === hoveredSuggestionId)
+    if (!hoveredSuggestion) {
+      return content
+    }
+
+    const { start, end } = hoveredSuggestion.position
+    const before = content.substring(0, start)
+    const highlighted = content.substring(start, end)
+    const after = content.substring(end)
+
+    return (
+      <>
+        {before}
+        <span className="bg-blue-200/30 dark:bg-blue-400/20">
+          {highlighted}
+        </span>
+        {after}
+      </>
+    )
+  }, [content, hoveredSuggestionId, grammarSuggestions, shouldShowHighlight])
 
   const handleTextChange = useCallback((newText: string) => {
     setContent(newText)
     setHasUnsavedChanges(true)
+    setHasInitialLoad(true) // Mark that user has started editing
     onChange?.(newText)
     adjustTextareaHeight()
   }, [onChange, adjustTextareaHeight])
+
+  // Removed: Space bar handler - now using keystroke-based grammar checking
 
   const handleTitleChange = useCallback((newTitle: string) => {
     setDocumentTitle(newTitle)
     setHasUnsavedChanges(true)
     onTitleChange?.(newTitle)
   }, [onTitleChange])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Handle Ctrl+Z (Windows/Linux) or Cmd+Z (Mac) for undo
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      if (canUndo()) {
+        e.preventDefault() // Prevent browser's default undo
+        undoLastSuggestion()
+        console.log("🔄 Triggered undo via keyboard shortcut")
+      }
+    }
+  }, [canUndo, undoLastSuggestion])
 
   const handleSave = useCallback(() => {
     onSave?.(documentTitle, content)
@@ -119,6 +227,26 @@ export function RichTextEditor({
   useEffect(() => {
     adjustTextareaHeight()
   }, [content])
+
+  // Handle cursor positioning after applying suggestions
+  useEffect(() => {
+    if (cursorPosition !== null && textareaRef.current) {
+      const textarea = textareaRef.current
+      
+      // Small delay to ensure content is updated first
+      setTimeout(() => {
+        // Focus the textarea and set cursor position
+        textarea.focus()
+        textarea.setSelectionRange(cursorPosition, cursorPosition)
+        
+        console.log(`📍 Cursor positioned at ${cursorPosition} in text of length ${textarea.value.length}`)
+        console.log(`📍 Text around cursor: "${textarea.value.substring(Math.max(0, cursorPosition - 10), cursorPosition + 10)}"`)
+      }, 10)
+      
+      // Clear the cursor position from store
+      setCursorPosition(null)
+    }
+  }, [cursorPosition, setCursorPosition])
 
   // Adjust height on window resize (throttled for performance)
   useEffect(() => {
@@ -160,19 +288,40 @@ export function RichTextEditor({
         <div className={`bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-all duration-200 focus-within:shadow-lg focus-within:border-blue-300 dark:focus-within:border-blue-600 flex flex-col min-h-[300px] ${
           readOnly ? 'bg-gray-50 dark:bg-gray-700/50' : ''
         }`}>
-          {/* Auto-expanding TextBox */}
-          <textarea
-            ref={textareaRef}
-            value={content}
-            onChange={(e) => handleTextChange(e.target.value)}
-            placeholder={placeholder}
-            disabled={disabled || readOnly}
-            spellCheck={true}
-            className={`w-full px-6 py-6 text-base leading-relaxed text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 bg-transparent border-none outline-none resize-none rounded-t-xl min-h-[200px] ${
-              readOnly ? 'text-gray-500 dark:text-gray-400 cursor-not-allowed' : ''
-            }`}
-            style={{ height: "auto" }}
-          />
+          {/* Text editor with highlight overlay */}
+          <div className="relative flex-1 flex flex-col">
+            {/* Highlight overlay - only visible when highlighting */}
+            {shouldShowHighlight() && (
+              <div
+                ref={highlightRef}
+                className="absolute inset-0 px-6 py-6 text-base leading-relaxed text-transparent pointer-events-none rounded-t-xl min-h-[200px] whitespace-pre-wrap break-words overflow-hidden z-10"
+                style={{ 
+                  fontFamily: 'inherit',
+                  fontSize: 'inherit',
+                  lineHeight: 'inherit',
+                  wordSpacing: 'inherit',
+                  letterSpacing: 'inherit'
+                }}
+              >
+                {getHighlightedText()}
+              </div>
+            )}
+            
+            {/* Auto-expanding TextBox */}
+            <textarea
+              ref={textareaRef}
+              value={content}
+              onChange={(e) => handleTextChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder}
+              disabled={disabled || readOnly}
+              spellCheck={true}
+              className={`relative w-full px-6 py-6 text-base leading-relaxed text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 bg-transparent border-none outline-none resize-none rounded-t-xl min-h-[200px] ${
+                readOnly ? 'text-gray-500 dark:text-gray-400 cursor-not-allowed' : ''
+              }`}
+              style={{ height: "auto" }}
+            />
+          </div>
 
           {/* Fixed bottom toolbar */}
           <div className="flex items-center justify-between p-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-700/30 rounded-b-xl flex-shrink-0 mt-auto">

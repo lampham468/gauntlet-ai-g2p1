@@ -3,6 +3,9 @@ import { DraftsService } from "../services/draftsService"
 import { SentMessagesService } from "../services/sentMessagesService"
 import type { Draft as SupabaseDraft, SentMessage as SupabaseSentMessage } from "../lib/supabase"
 import { supabase } from "../lib/supabase"
+import { spellChecker, type SpellCheckError } from "../services/spellChecker"
+import { grammarChecker, type GrammarCheckResult } from "../services/grammarChecker"
+import { clarityChecker, type ClarityCheckResult, type ClarityCheckError } from "../services/clarityChecker"
 
 // Local interfaces that match our UI needs
 interface Draft {
@@ -31,6 +34,18 @@ export interface Suggestion {
   original: string
   suggestion: string
   explanation: string
+  source: "local" | "window" | "sentence" | "paragraph" | "document"
+  priority: number
+  position: { start: number; end: number }
+  confidence: number
+}
+
+interface UndoState {
+  draftId: string
+  previousContent: string
+  appliedSuggestion: Suggestion
+  previousSuggestions: Suggestion[]
+  timestamp: number
 }
 
 // Helper functions to convert between Supabase and local types
@@ -61,9 +76,34 @@ interface AppState {
   // Grammar check functionality
   grammarSuggestions: Suggestion[]
   isCheckingGrammar: boolean
-  checkGrammar: (text: string) => Promise<void>
+  hoveredSuggestionId: string | null
+  checkGrammar: (text: string) => void
+  checkClarityAndTone: (text: string, mode?: 'clarity' | 'tone') => Promise<void>
   clearGrammarSuggestions: () => void
   applySuggestion: (suggestionId: string) => void
+  setHoveredSuggestion: (suggestionId: string | null) => void
+  
+  // Suggestion validation
+  validateSuggestion: (suggestion: Suggestion, currentText: string) => boolean
+  cleanupInvalidSuggestions: () => void
+  invalidateSuggestionsOnEdit: (oldText: string, newText: string) => void
+
+  // Undo functionality
+  undoStack: UndoState[]
+  canUndo: () => boolean
+  undoLastSuggestion: () => void
+
+  // Cursor positioning after applying suggestions
+  cursorPosition: number | null
+  setCursorPosition: (position: number | null) => void
+
+  // Local spell check functionality
+  checkSpelling: (text: string) => Promise<void>
+  addSpellingSuggestions: (errors: SpellCheckError[]) => void
+
+  // Clarity check functionality
+  checkClarity: (text: string) => Promise<void>
+  addClaritySuggestions: (results: ClarityCheckResult[]) => void
 
   // Drafts functionality
   drafts: Draft[]
@@ -100,41 +140,215 @@ export const useStore = create<AppState>((set, get) => ({
   // Grammar check state
   grammarSuggestions: [],
   isCheckingGrammar: false,
+  hoveredSuggestionId: null,
 
-  checkGrammar: async (text: string) => {
-    console.log("Store: checkGrammar called. Text length:", text.length)
-    set({ isCheckingGrammar: true, grammarSuggestions: [] })
-    try {
-      console.log("Store: Invoking Supabase function 'check-grammar'...")
-      const { data, error } = await supabase.functions.invoke("check-grammar", {
-        body: { text },
-      })
-      console.log("Store: Supabase function response:", { data, error })
+  // Undo state
+  undoStack: [],
 
-      if (error) {
-        throw error
-      }
+  // Cursor positioning
+  cursorPosition: null,
 
-      if (data.suggestions) {
-        const suggestionsWithIds = (data.suggestions as Omit<Suggestion, "id">[]).map((suggestion, index) => ({
-          ...suggestion,
-          id: `${Date.now()}-${index}`,
-        }))
-        set({ grammarSuggestions: suggestionsWithIds })
-      }
-    } catch (error) {
-      console.error("Store: Failed to check grammar:", error)
-      // We could set an error state here if we wanted to display it in the UI
-    } finally {
-      console.log("Store: Finished grammar check.")
-      set({ isCheckingGrammar: false })
+  checkGrammar: (text: string) => {
+    console.log("📝 Store: checkGrammar called (local). Text length:", text.length)
+    
+    // Local grammar check - instant and no API calls
+    if (!grammarChecker.isReady()) {
+      console.warn('⚠️ Grammar checker not ready yet')
+      return
     }
+
+    console.log("📝 Store: calling grammarChecker.checkText...")
+    const grammarResults = grammarChecker.checkText(text)
+    console.log("📝 Store: grammarChecker returned", grammarResults.length, "results:", grammarResults)
+    
+    const grammarSuggestions: Suggestion[] = grammarResults.map((result, index) => ({
+      id: `grammar_${Date.now()}_${index}`,
+      type: result.type,
+      original: result.original,
+      suggestion: result.suggestion,
+      explanation: result.explanation,
+      source: "local" as const, // Local grammar checking
+      priority: result.type === 'grammar' ? 2 : 3, // Grammar higher priority than clarity
+      position: result.position,
+      confidence: 0.8 // Default confidence for local grammar suggestions
+    }))
+    
+    console.log("📝 Store: created", grammarSuggestions.length, "grammar suggestions:", grammarSuggestions)
+    
+    // Replace grammar/clarity suggestions but keep spelling suggestions
+    set((state) => {
+      const newSuggestions = [
+        ...state.grammarSuggestions.filter(s => s.source === "local" && s.type === "spelling"), // Keep spelling suggestions
+        ...grammarSuggestions // Replace grammar/clarity suggestions with new ones
+      ]
+      console.log("📝 Store: setting grammarSuggestions to", newSuggestions.length, "total suggestions")
+      return {
+        grammarSuggestions: newSuggestions
+      }
+    })
   },
 
   clearGrammarSuggestions: () => set({ grammarSuggestions: [] }),
 
+  setHoveredSuggestion: (suggestionId: string | null) => set({ hoveredSuggestionId: suggestionId }),
+
+  // Future method for clarity/tone checking that WILL show loading bar
+  checkClarityAndTone: async (text: string, mode: 'clarity' | 'tone' = 'clarity') => {
+    console.log(`Store: checkClarityAndTone called with mode: ${mode}. Text length:`, text.length)
+    set({ isCheckingGrammar: true }) // Show loading bar for longer operations
+    
+    try {
+      // This will be implemented later for paragraph/document-level analysis
+      // For now, just a placeholder that shows how loading state should work
+      console.log(`Store: Would invoke clarity/tone check for ${mode}...`)
+      
+      // Simulate longer processing time for clarity/tone analysis
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+    } catch (error) {
+      console.error(`Store: Failed to check ${mode}:`, error)
+    } finally {
+      console.log(`Store: Finished ${mode} check.`)
+      set({ isCheckingGrammar: false })
+    }
+  },
+
+  // Local spell check implementation
+  checkSpelling: async (text: string) => {
+    if (!spellChecker.isReady()) {
+      console.warn('⚠️ Spell checker not ready yet')
+      return
+    }
+
+    const errors = await spellChecker.checkText(text)
+    get().addSpellingSuggestions(errors)
+  },
+
+  addSpellingSuggestions: (errors: SpellCheckError[]) => {
+    const spellingSuggestions: Suggestion[] = errors.map((error, index) => {
+      const hasRealSuggestions = error.suggestions.length > 0 && !error.suggestions.includes('(no suggestions)')
+      
+      return {
+        id: `spell_${Date.now()}_${index}`,
+        type: "spelling" as const,
+        original: error.word,
+        suggestion: hasRealSuggestions ? error.suggestions[0] : error.word, // Keep original word if no suggestions
+        explanation: hasRealSuggestions 
+          ? `Misspelled word: "${error.word}"${error.suggestions.length > 1 ? ` (${error.suggestions.length} suggestions)` : ''}`
+          : `Potential misspelling: "${error.word}"`,
+        source: "local" as const,
+        priority: hasRealSuggestions ? 1 : 0.5, // Lower priority for words without suggestions
+        position: error.position,
+        confidence: hasRealSuggestions ? 0.9 : 0.3 // Lower confidence if no suggestions
+      }
+    })
+
+    // Remove old spelling suggestions and add new ones
+    set((state) => {
+      const nonSpellingSuggestions = state.grammarSuggestions.filter(s => s.type !== "spelling")
+      const newSuggestions = [
+        ...nonSpellingSuggestions,
+        ...spellingSuggestions
+      ]
+      return {
+        grammarSuggestions: newSuggestions
+      }
+    })
+  },
+
+  // Track text changes and invalidate suggestions affected by edits
+  // This is more aggressive than validateSuggestion - it removes suggestions when ANY character in their range is modified
+  invalidateSuggestionsOnEdit: (oldText: string, newText: string) => {
+    const { grammarSuggestions } = get()
+    
+    if (grammarSuggestions.length === 0) return
+    
+    // Find the first difference between old and new text
+    let changeStart = 0
+    let changeEnd = Math.max(oldText.length, newText.length)
+    
+    // Find where the texts start to differ
+    while (changeStart < Math.min(oldText.length, newText.length) && 
+           oldText[changeStart] === newText[changeStart]) {
+      changeStart++
+    }
+    
+    // Find where the texts end their differences (working backwards)
+    let oldEnd = oldText.length - 1
+    let newEnd = newText.length - 1
+    
+    while (oldEnd >= changeStart && newEnd >= changeStart && 
+           oldText[oldEnd] === newText[newEnd]) {
+      oldEnd--
+      newEnd--
+    }
+    
+    changeEnd = oldEnd + 1 // Convert to exclusive end index
+    
+    console.log(`📝 Text change detected: indices ${changeStart}-${changeEnd} (old length: ${oldText.length}, new length: ${newText.length})`)
+    
+    // Remove any suggestions whose range overlaps with the changed area
+    const validSuggestions = grammarSuggestions.filter(suggestion => {
+      const { start, end } = suggestion.position
+      
+      // If suggestion range overlaps with changed area, invalidate it
+      const overlaps = !(end <= changeStart || start >= changeEnd)
+      
+      if (overlaps) {
+        console.log(`❌ Invalidating ${suggestion.type} suggestion "${suggestion.original}" (range ${start}-${end}) due to text change at ${changeStart}-${changeEnd}`)
+        return false
+      }
+      
+      return true
+    })
+    
+    // Update suggestions if any were removed
+    if (validSuggestions.length !== grammarSuggestions.length) {
+      const removedCount = grammarSuggestions.length - validSuggestions.length
+      console.log(`🧹 Removed ${removedCount} suggestions due to text edits`)
+      
+      set({ grammarSuggestions: validSuggestions })
+    }
+  },
+
+  // Validate that a suggestion still applies to the current text (used for applying suggestions)
+  validateSuggestion: (suggestion: Suggestion, currentText: string): boolean => {
+    const { start, end } = suggestion.position
+    
+    // Check if position is still valid
+    if (start < 0 || end > currentText.length || start >= end) {
+      return false
+    }
+    
+    // Check if the original text still exists at the expected position
+    const textAtPosition = currentText.slice(start, end)
+    return textAtPosition === suggestion.original
+  },
+
+  // Clean up invalid suggestions (fallback method - the main cleanup is now invalidateSuggestionsOnEdit)
+  cleanupInvalidSuggestions: () => {
+    const { grammarSuggestions, activeDraftId, getDraftById } = get()
+    
+    if (!activeDraftId) return
+    
+    const activeDraft = getDraftById(activeDraftId)
+    if (!activeDraft) return
+    
+    const validSuggestions = grammarSuggestions.filter(suggestion => 
+      get().validateSuggestion(suggestion, activeDraft.content)
+    )
+    
+    // Only update if we found invalid suggestions
+    if (validSuggestions.length !== grammarSuggestions.length) {
+      const removedCount = grammarSuggestions.length - validSuggestions.length
+      console.log(`🧹 Fallback cleanup removed ${removedCount} invalid suggestions`)
+      
+      set({ grammarSuggestions: validSuggestions })
+    }
+  },
+
   applySuggestion: (suggestionId: string) => {
-    const { grammarSuggestions, activeDraftId, getDraftById, updateDraft } = get()
+    const { grammarSuggestions, activeDraftId, getDraftById, updateDraft, checkSpelling, validateSuggestion } = get()
     const suggestionToApply = grammarSuggestions.find((s) => s.id === suggestionId)
 
     if (!suggestionToApply || !activeDraftId) {
@@ -148,23 +362,194 @@ export const useStore = create<AppState>((set, get) => ({
       return
     }
 
-    // Replace only the first occurrence to avoid unintended changes
-    const newContent = activeDraft.content.replace(suggestionToApply.original, suggestionToApply.suggestion)
+    // Validate that the suggestion still applies to the current text
+    if (!validateSuggestion(suggestionToApply, activeDraft.content)) {
+      console.warn("Cannot apply suggestion: original text has been modified or deleted")
+      // Remove the invalid suggestion
+      set((state) => ({
+        grammarSuggestions: state.grammarSuggestions.filter(s => s.id !== suggestionId)
+      }))
+      return
+    }
 
-    // Persist the change to the backend and update the draft in the store
+    // Use position-based replacement instead of string replacement to handle duplicates correctly
+    const { start, end } = suggestionToApply.position
+    const originalText = activeDraft.content
+    const newContent = originalText.slice(0, start) + suggestionToApply.suggestion + originalText.slice(end)
+
+    // Calculate the length difference to update remaining suggestion positions
+    const lengthDiff = suggestionToApply.suggestion.length - (end - start)
+
+    // Update positions of remaining suggestions that come after this one
+    const updatedSuggestions = grammarSuggestions
+      .filter((s) => s.id !== suggestionId) // Remove the applied suggestion
+      .map((suggestion) => {
+        // If suggestion starts after the applied change, shift its position
+        if (suggestion.position.start >= end) {
+          return {
+            ...suggestion,
+            position: {
+              start: suggestion.position.start + lengthDiff,
+              end: suggestion.position.end + lengthDiff
+            }
+          }
+        }
+        // If suggestion overlaps with applied change, remove it (conflicting suggestion)
+        else if (suggestion.position.end > start && suggestion.position.start < end) {
+          return null // Mark for removal
+        }
+        // Otherwise, keep suggestion unchanged
+        return suggestion
+      })
+      .filter((s): s is Suggestion => s !== null) // Remove null entries
+
+    // Update the draft content
     updateDraft(activeDraftId, activeDraft.title, newContent)
 
-    // Remove the applied suggestion from the list
+    // Update suggestions list and trigger re-check for spelling
     set((state) => ({
-      grammarSuggestions: state.grammarSuggestions.filter((s) => s.id !== suggestionId),
+      grammarSuggestions: updatedSuggestions
     }))
+
+    // Store undo state before applying the change
+    const undoState: UndoState = {
+      draftId: activeDraftId,
+      previousContent: originalText,
+      appliedSuggestion: suggestionToApply,
+      previousSuggestions: grammarSuggestions,
+      timestamp: Date.now()
+    }
+
+    // Add to undo stack (keep only last 10 operations)
+    set((state) => ({
+      undoStack: [undoState, ...state.undoStack].slice(0, 10)
+    }))
+
+    // Set cursor position to the end of the replaced text
+    const newCursorPosition = start + suggestionToApply.suggestion.length
+    console.log(`📍 Setting cursor position: start=${start}, suggestionLength=${suggestionToApply.suggestion.length}, newPosition=${newCursorPosition}`)
+    console.log(`📍 Original text: "${suggestionToApply.original}" -> New text: "${suggestionToApply.suggestion}"`)
+    set({ cursorPosition: newCursorPosition })
+
+    // Re-trigger spell check on the updated content (since it's <5ms, no performance concern)
+    checkSpelling(newContent).catch(error => {
+      console.error("Failed to re-check spelling after applying suggestion:", error)
+    })
   },
+
+  canUndo: () => {
+    const { undoStack, activeDraftId } = get()
+    return undoStack.length > 0 && undoStack[0].draftId === activeDraftId
+  },
+
+  undoLastSuggestion: () => {
+    const { undoStack, activeDraftId, updateDraft, checkSpelling, getDraftById } = get()
+    
+    if (!activeDraftId || undoStack.length === 0) {
+      console.warn("Cannot undo: no active draft or empty undo stack")
+      return
+    }
+
+    const lastUndo = undoStack[0]
+    
+    if (lastUndo.draftId !== activeDraftId) {
+      console.warn("Cannot undo: undo state is for a different draft")
+      return
+    }
+
+    // Restore the previous content (keep current title)
+    const currentDraft = getDraftById(activeDraftId)
+    const currentTitle = currentDraft?.title || "Untitled document"
+    updateDraft(activeDraftId, currentTitle, lastUndo.previousContent)
+
+    // Restore the previous suggestions
+    set((state) => ({
+      grammarSuggestions: lastUndo.previousSuggestions,
+      undoStack: state.undoStack.slice(1) // Remove the used undo state
+    }))
+
+    // Re-trigger spell check on the restored content
+    checkSpelling(lastUndo.previousContent).catch(error => {
+      console.error("Failed to re-check spelling after undo:", error)
+    })
+
+    console.log("✅ Undid suggestion application")
+  },
+
+  // Clarity check implementation
+  checkClarity: async (text: string) => {
+    if (!clarityChecker.isReady()) {
+      console.warn('⚠️ Clarity checker not ready yet')
+      return
+    }
+
+    // Only check meaningful text (more than 20 characters for clarity analysis)
+    if (text.trim().length < 20) {
+      // Clear clarity suggestions if text is too short
+      set((state) => ({
+        grammarSuggestions: state.grammarSuggestions.filter(s => s.type !== "clarity")
+      }))
+      return
+    }
+
+    try {
+      console.log('🔍 Store: Starting clarity check for text length:', text.length)
+      set({ isCheckingGrammar: true }) // Show loading state
+      
+      // Clear previous clarity suggestions before starting new check
+      set((state) => ({
+        grammarSuggestions: state.grammarSuggestions.filter(s => s.type !== "clarity")
+      }))
+      
+      const result = await clarityChecker.checkText(text)
+      
+      if (Array.isArray(result)) {
+        get().addClaritySuggestions(result)
+      } else {
+        // Handle error case
+        console.error('Clarity check failed:', result.message)
+      }
+    } catch (error) {
+      console.error('Clarity check error:', error)
+    } finally {
+      set({ isCheckingGrammar: false }) // Hide loading state
+    }
+  },
+
+  addClaritySuggestions: (results: ClarityCheckResult[]) => {
+    const claritySuggestions: Suggestion[] = results.map((result, index) => ({
+      id: `clarity_${Date.now()}_${index}`,
+      type: "clarity" as const,
+      original: result.original,
+      suggestion: result.suggestion,
+      explanation: result.explanation,
+      source: "local" as const, // OpenAI via local API
+      priority: 3, // Lower priority than spelling and grammar
+      position: result.position,
+      confidence: result.confidence
+    }))
+
+    // Add new clarity suggestions (previous ones already cleared in checkClarity)
+    set((state) => ({
+      grammarSuggestions: [...state.grammarSuggestions, ...claritySuggestions]
+    }))
+
+    console.log('✅ Store: Added', claritySuggestions.length, 'clarity suggestions')
+  },
+
+  setCursorPosition: (position: number | null) => set({ cursorPosition: position }),
 
   // Drafts state
   drafts: [],
   activeDraftId: null,
 
-  setActiveDraft: (id: string) => set({ activeDraftId: id }),
+  setActiveDraft: (id: string) => set((state) => ({ 
+    activeDraftId: id,
+    activeSentId: null, // Clear sent message when switching to draft
+    // Clear clarity suggestions when switching drafts (spelling suggestions can remain)
+    grammarSuggestions: state.grammarSuggestions.filter(s => s.type !== "clarity"),
+    hoveredSuggestionId: null // Clear hover state
+  })),
 
   getDraftById: (id: string) => {
     const state = get()
@@ -387,7 +772,11 @@ export const useStore = create<AppState>((set, get) => ({
   sentMessages: [],
   activeSentId: null,
 
-  setActiveSent: (id: string) => set({ activeSentId: id }),
+  setActiveSent: (id: string) => set({ 
+    activeSentId: id,
+    grammarSuggestions: [], // Clear suggestions when viewing sent messages (read-only)
+    hoveredSuggestionId: null // Clear hover state too
+  }),
 
   getSentById: (id: string) => {
     const state = get()
