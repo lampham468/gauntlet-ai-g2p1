@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useStore } from './useStore'
 import { supabase } from '../lib/supabase'
 import { DraftsService } from '../services/draftsService'
-import { SentMessagesService } from '../services/sentMessagesService'
+// import { SentMessagesService } from '../services/sentMessagesService'
 
 // Mock dependencies
 vi.mock('../lib/supabase', () => ({
@@ -98,7 +98,7 @@ describe('useStore', () => {
       const newDraft = { id: '2', user_id: 'u1', title: 'Untitled document', content: '', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
       vi.mocked(DraftsService.createDraft).mockResolvedValue(newDraft)
 
-      const newDraftId = await useStore.getState().createNewDraft()
+      const _newDraftId = await useStore.getState().createNewDraft()
 
       const state = useStore.getState()
       expect(state.drafts).toHaveLength(1)

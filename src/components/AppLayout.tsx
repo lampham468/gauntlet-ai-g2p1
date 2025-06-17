@@ -1,7 +1,7 @@
 "use client"
 import type { ReactNode } from "react"
 import { LogOut } from "lucide-react"
-import OfflineBanner from "./OfflineBanner"
+
 
 interface AppLayoutProps {
   sidebar: ReactNode
@@ -11,7 +11,7 @@ interface AppLayoutProps {
     email: string
   }
   onLogout?: () => void
-  editorContent?: string
+  _editorContent?: string
   className?: string
 }
 
@@ -21,14 +21,11 @@ export function AppLayout({
   rightSidebar,
   user,
   onLogout,
-  editorContent = "",
+  _editorContent = "",
   className = "",
 }: AppLayoutProps) {
   return (
     <div className={`app-layout flex flex-col h-screen bg-gray-50 dark:bg-gray-900 ${className}`}>
-      {/* Offline Banner */}
-      <OfflineBanner />
-
       {/* Main Content Area - No top bar needed */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar - Fixed width, not collapsible */}

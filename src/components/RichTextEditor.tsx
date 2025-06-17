@@ -1,6 +1,6 @@
 "use client"
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
-import { Save, SpellCheck } from "lucide-react"
+import { Save } from "lucide-react"
 import CopyButton from "./CopyButton"
 import { SendButton } from "./SendButton"
 import { useStore } from "../store/useStore"

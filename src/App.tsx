@@ -5,7 +5,8 @@ import SidebarDraftList from "./components/SidebarDraftList"
 import SidebarSentList from "./components/SidebarSentList"
 import GrammarSidebar from "./components/GrammarSidebar"
 import AppLayout from "./components/AppLayout"
-import OfflineBanner from "./components/OfflineBanner"
+
+
 import { useStore } from "./store/useStore"
 import { useAuth, authHelpers } from "./hooks/useAuth"
 import { supabase } from "./lib/supabase"
@@ -53,7 +54,7 @@ function App() {
     sendDraft,
     loadDrafts,
     loadSentMessages,
-    deleteSentMessage,
+    // deleteSentMessage,
     clearUserData,
   } = useStore()
 
@@ -160,7 +161,7 @@ function App() {
   }, [])
 
   // Validate a list of comma-separated emails
-  const validateEmailList = useCallback((emailList: string, fieldName: string): { isValid: boolean; error?: string } => {
+  const _validateEmailList = useCallback((emailList: string, fieldName: string): { isValid: boolean; error?: string } => {
     if (!emailList.trim()) {
       return { isValid: true } // Empty list is valid
     }
@@ -344,6 +345,11 @@ function App() {
   }
 
   const handleDraftSelect = async (id: string) => {
+    // If the clicked draft is already active, do nothing
+    if (id === activeDraftId) {
+      return
+    }
+
     // Handle auto-save or deletion of current draft before switching
     await handleDraftDeselection(true) // Delete empty drafts when explicitly selecting another
     
@@ -358,6 +364,11 @@ function App() {
   }
 
   const handleSentSelect = async (id: string) => {
+    // If the clicked sent message is already active, do nothing
+    if (id === activeSentId) {
+      return
+    }
+
     // Handle auto-save or deletion of current draft before switching
     await handleDraftDeselection(true) // Delete empty drafts when explicitly selecting a sent message
     
@@ -581,7 +592,6 @@ function App() {
           </div>
           <AuthForm onSuccess={handleAuthSuccess} />
         </div>
-        <OfflineBanner />
       </div>
     )
   }
@@ -855,6 +865,8 @@ function App() {
           </div>
         </div>
       )}
+
+
     </>
   )
 }
