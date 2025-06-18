@@ -48,10 +48,10 @@ export function RichTextEditor({
   const [previousContent, setPreviousContent] = useState<string>(text) // Track previous content for change detection
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const highlightRef = useRef<HTMLDivElement>(null)
-  const checkGrammar = useStore((state) => state.checkGrammar)
+  const _checkGrammar = useStore((state) => state.checkGrammar)
   const checkSpelling = useStore((state) => state.checkSpelling)
   const checkClarity = useStore((state) => state.checkClarity)
-  const cleanupInvalidSuggestions = useStore((state) => state.cleanupInvalidSuggestions)
+  const _cleanupInvalidSuggestions = useStore((state) => state.cleanupInvalidSuggestions)
   const invalidateSuggestionsOnEdit = useStore((state) => state.invalidateSuggestionsOnEdit)
   const hoveredSuggestionId = useStore((state) => state.hoveredSuggestionId)
   const grammarSuggestions = useStore((state) => state.grammarSuggestions)
@@ -262,6 +262,8 @@ export function RichTextEditor({
       clearTimeout(resizeTimeout)
     }
   }, [adjustTextareaHeight])
+
+
 
   return (
     <div className={`rich-text-editor p-8 h-full flex flex-col ${className}`}>

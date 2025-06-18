@@ -15,7 +15,7 @@ import { EmailInput } from './components/EmailInput'
 
 function App() {
   const { user: authUser, loading: authLoading } = useAuth()
-  const user = authUser ? { email: authUser.email || '' } : null
+  const user = useMemo(() => authUser ? { email: authUser.email || '' } : null, [authUser])
   
   const [isLoading, setIsLoading] = useState(false)
   const [editorContent, setEditorContent] = useState("")
@@ -292,7 +292,9 @@ function App() {
 
   // Load data when user logs in - TESTING ONE AT A TIME
   useEffect(() => {
-    if (user && !authLoading && user.email !== dataLoadedForUserRef.current) {
+    if (authLoading) return
+
+    if (user && dataLoadedForUserRef.current !== user.email) {
       console.log('User logged in, loading data for:', user.email)
       dataLoadedForUserRef.current = user.email
       
@@ -329,29 +331,19 @@ function App() {
 
   // Handle browser beforeunload to persist local drafts
   useEffect(() => {
-    const handleBeforeUnload = async (event: BeforeUnloadEvent) => {
-      if (activeDraftId) {
-        const currentDraft = getDraftById(activeDraftId)
-        if (currentDraft?.isLocal) {
-          // Check if there's meaningful content to save
-          const hasContent = (editorTitle.trim() !== "Untitled document" && editorTitle.trim() !== "") || 
-                             editorContent.trim() !== ""
-          
-          if (hasContent) {
-            // Try to persist the draft before page unload
-            try {
-              await saveDraft(editorTitle, editorContent, activeDraftId)
-            } catch (error) {
-              console.error('Failed to save draft before page unload:', error)
-            }
-          }
+    const handleBeforeUnload = async (_event: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges && activeDraft) {
+        try {
+          await saveDraft(activeDraft.title, activeDraft.content, activeDraft.id)
+        } catch (error) {
+          console.error("Failed to save draft on page unload:", error)
         }
       }
     }
 
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [activeDraftId, getDraftById, editorTitle, editorContent, saveDraft])
+  }, [hasUnsavedChanges, activeDraft, saveDraft])
 
   const handleLogout = async () => {
     try {
@@ -473,33 +465,34 @@ function App() {
   }
 
   const handleSend = async (recipientEmail?: string, ccRecipients?: string, bccRecipients?: string, subject?: string) => {
-    if (activeDraftId) {
-      try {
-        setIsLoading(true)
-        // Create a copy of the draft with the custom subject if provided
-        const draft = getDraftById(activeDraftId)
-        if (draft && subject && subject !== draft.title) {
-          // Update the draft with the email subject before sending
-          await updateDraft(activeDraftId, subject, draft.content)
-        }
-        
-        await sendDraft(activeDraftId, recipientEmail, ccRecipients, bccRecipients)
-        setEditorTitle("Untitled document")
-        setEditorContent("")
-        setActiveDraft("")
-        setHasUnsavedChanges(false)
-        setShowEmailDialog(false)
-        
-        // Reset email form state
-        setToRecipients([])
-        setCcRecipients([])
-        setBccRecipients([])
-        setEmailSubject("")
-      } catch (error) {
-        console.error('Error sending draft:', error)
-      } finally {
-        setIsLoading(false)
+    if (!activeDraft || !activeDraftId) return
+
+    try {
+      setIsLoading(true)
+      // Create a copy of the draft with the custom subject if provided
+      const draft = getDraftById(activeDraftId)
+      if (draft && subject && subject !== draft.title) {
+        // Update the draft with the email subject before sending
+        await updateDraft(activeDraftId, subject, draft.content)
       }
+      
+      await sendDraft(activeDraftId, recipientEmail, ccRecipients, bccRecipients)
+      setEditorTitle("Untitled document")
+      setEditorContent("")
+      setActiveDraft("")
+      setHasUnsavedChanges(false)
+      setShowEmailDialog(false)
+      
+      // Reset email form state
+      setToRecipients([])
+      setCcRecipients([])
+      setBccRecipients([])
+      setEmailSubject("")
+    } catch (error) {
+      console.error('Error sending draft:', error)
+      throw error
+    } finally {
+      setIsLoading(false)
     }
   }
 

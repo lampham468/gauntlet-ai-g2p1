@@ -1,4 +1,4 @@
-// @ts-ignore - write-good doesn't have TypeScript definitions
+// @ts-expect-error - write-good doesn't have TypeScript definitions
 import writeGood from 'write-good'
 
 export interface GrammarCheckResult {
@@ -35,7 +35,7 @@ class GrammarCheckerService {
       console.log('🔍 Grammar checker: write-good found', suggestions.length, 'issues:', suggestions)
       
       const results = suggestions
-        .map((suggestion: WriteGoodSuggestion, index: number) => ({
+        .map((suggestion: WriteGoodSuggestion, _index: number) => ({
           type: this.getIssueType(suggestion.reason),
           original: text.substring(suggestion.index, suggestion.index + suggestion.offset),
           suggestion: this.getSuggestionText(suggestion.reason, text.substring(suggestion.index, suggestion.index + suggestion.offset)),
@@ -70,7 +70,7 @@ class GrammarCheckerService {
   /**
    * Generate a suggestion based on the issue type
    */
-  private getSuggestionText(reason: string, original: string): string {
+  private getSuggestionText(reason: string, _original: string): string {
     // For write-good, we provide general suggestions since it doesn't give specific replacements
     if (reason.includes('passive voice')) {
       return `Make this active voice`
@@ -100,6 +100,7 @@ class GrammarCheckerService {
   isReady(): boolean {
     return this.isInitialized
   }
+
 }
 
 // Export a singleton instance

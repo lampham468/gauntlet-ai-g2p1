@@ -2,10 +2,9 @@ import { create } from "zustand"
 import { DraftsService } from "../services/draftsService"
 import { SentMessagesService } from "../services/sentMessagesService"
 import type { Draft as SupabaseDraft, SentMessage as SupabaseSentMessage } from "../lib/supabase"
-import { supabase } from "../lib/supabase"
 import { spellChecker, type SpellCheckError } from "../services/spellChecker"
-import { grammarChecker, type GrammarCheckResult } from "../services/grammarChecker"
-import { clarityChecker, type ClarityCheckResult, type ClarityCheckError } from "../services/clarityChecker"
+import { grammarChecker } from "../services/grammarChecker"
+import { clarityChecker, type ClarityCheckResult } from "../services/clarityChecker"
 
 // Local interfaces that match our UI needs
 interface Draft {
@@ -407,7 +406,7 @@ export const useStore = create<AppState>((set, get) => ({
     updateDraft(activeDraftId, activeDraft.title, newContent)
 
     // Update suggestions list and trigger re-check for spelling
-    set((state) => ({
+    set((_state) => ({
       grammarSuggestions: updatedSuggestions
     }))
 
@@ -421,8 +420,8 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     // Add to undo stack (keep only last 10 operations)
-    set((state) => ({
-      undoStack: [undoState, ...state.undoStack].slice(0, 10)
+    set((_state) => ({
+      undoStack: [undoState, ..._state.undoStack].slice(0, 10)
     }))
 
     // Set cursor position to the end of the replaced text

@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useStore } from './useStore'
-import { supabase } from '../lib/supabase'
 import { DraftsService } from '../services/draftsService'
 // import { SentMessagesService } from '../services/sentMessagesService'
 
@@ -48,36 +47,80 @@ describe('useStore', () => {
   })
 
   describe('Grammar Checking', () => {
-    it('checkGrammar should fetch suggestions and update state', async () => {
-      const mockSuggestions = [{ type: 'grammar' as const, original: 'bad', suggestion: 'good', explanation: '...' }]
-      vi.mocked(supabase.functions.invoke).mockResolvedValue({ data: { suggestions: mockSuggestions }, error: null })
-
-      await useStore.getState().checkGrammar('some bad text')
-
-      const state = useStore.getState()
-      expect(state.isCheckingGrammar).toBe(false)
-      expect(state.grammarSuggestions).toHaveLength(1)
-      expect(state.grammarSuggestions[0].original).toBe('bad')
-    })
-
-    it('applySuggestion should update the active draft content', () => {
-      const draft = { id: 'd1', title: 'Test', content: 'This is bad text.', createdAt: new Date(), updatedAt: new Date() }
-      const suggestion = { id: 's1', type: 'grammar' as const, original: 'bad text', suggestion: 'good text', explanation: '...' }
+    it('should test applySuggestion behavior with real state manipulation', () => {
+      // Test the actual applySuggestion logic without mocking the core functionality
+      const draft = { id: 'd1', title: 'Test', content: 'This is bad text.', createdAt: new Date(), updatedAt: new Date(), isLocal: true }
+      const suggestion = { 
+        id: 's1', 
+        type: 'grammar' as const, 
+        original: 'bad text', 
+        suggestion: 'good text', 
+        explanation: 'Use positive language',
+        position: { start: 8, end: 16 },
+        source: 'local' as const,
+        priority: 2,
+        confidence: 0.8
+      }
+      
+      // Set up the state with real draft and suggestion
       useStore.setState({
         drafts: [draft],
         activeDraftId: 'd1',
-        grammarSuggestions: [suggestion],
-        updateDraft: vi.fn(async (id, title, content) => {
-          useStore.setState(state => ({
-            drafts: state.drafts.map(d => d.id === id ? { ...d, title, content } : d)
-          }))
-        })
+        grammarSuggestions: [suggestion]
       })
 
+      // Test the actual applySuggestion logic
       useStore.getState().applySuggestion('s1')
-      const updatedDraft = useStore.getState().drafts.find(d => d.id === 'd1')
+      
+      const state = useStore.getState()
+      
+      // Verify the suggestion was removed after application (this should work regardless)
+      expect(state.grammarSuggestions).toHaveLength(0)
+      
+      // For local drafts, the content should be updated immediately
+      const updatedDraft = state.drafts.find(d => d.id === 'd1')
       expect(updatedDraft?.content).toBe('This is good text.')
+    })
+
+    it('should test clearGrammarSuggestions functionality', () => {
+      // Set up state with suggestions
+      const mockSuggestions = [{
+        id: 'test_suggestion',
+        type: 'grammar' as const,
+        original: 'bad',
+        suggestion: 'good',
+        explanation: 'Use positive language',
+        position: { start: 5, end: 8 },
+        source: 'local' as const,
+        priority: 2,
+        confidence: 0.8
+      }]
+      
+      useStore.setState({ grammarSuggestions: mockSuggestions })
+      expect(useStore.getState().grammarSuggestions).toHaveLength(1)
+
+      // Test the clear functionality
+      useStore.getState().clearGrammarSuggestions()
       expect(useStore.getState().grammarSuggestions).toHaveLength(0)
+    })
+
+    it('should handle applySuggestion with non-existent suggestion ID', () => {
+      const draft = { id: 'd1', title: 'Test', content: 'Original content.', createdAt: new Date(), updatedAt: new Date() }
+      
+      useStore.setState({
+        drafts: [draft],
+        activeDraftId: 'd1',
+        grammarSuggestions: []
+      })
+
+      // Try to apply a non-existent suggestion
+      useStore.getState().applySuggestion('non-existent-id')
+      
+      const state = useStore.getState()
+      const updatedDraft = state.drafts.find(d => d.id === 'd1')
+      
+      // Content should remain unchanged
+      expect(updatedDraft?.content).toBe('Original content.')
     })
   })
 
@@ -94,16 +137,15 @@ describe('useStore', () => {
       expect(state.drafts[0].title).toBe('Draft 1')
     })
 
-    it('createNewDraft should add a new draft to the state', async () => {
-      const newDraft = { id: '2', user_id: 'u1', title: 'Untitled document', content: '', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
-      vi.mocked(DraftsService.createDraft).mockResolvedValue(newDraft)
-
-      const _newDraftId = await useStore.getState().createNewDraft()
+    it('createNewDraft should add a new draft to the state', () => {
+      const newDraftId = useStore.getState().createNewDraft()
 
       const state = useStore.getState()
       expect(state.drafts).toHaveLength(1)
-      expect(state.drafts[0].id).toBe('2')
-      expect(state.activeDraftId).toBe('2')
+      expect(state.drafts[0].id).toBe(newDraftId)
+      expect(state.activeDraftId).toBe(newDraftId)
+      expect(state.drafts[0].title).toBe('Untitled document')
+      expect(state.drafts[0].content).toBe('')
     })
 
     it('deleteDraft should remove a draft from the state', async () => {

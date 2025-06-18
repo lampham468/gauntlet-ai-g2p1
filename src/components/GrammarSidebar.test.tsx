@@ -11,7 +11,17 @@ const mockApplySuggestion = vi.fn();
 const mockClearGrammarSuggestions = vi.fn();
 
 const mockSuggestions: Suggestion[] = [
-  { id: '1', type: 'grammar', original: 'bad', suggestion: 'good', explanation: 'An explanation.' },
+  { 
+    id: '1', 
+    type: 'grammar', 
+    original: 'bad', 
+    suggestion: 'good', 
+    explanation: 'An explanation.',
+    position: { start: 5, end: 8 },
+    source: 'local',
+    priority: 2,
+    confidence: 0.8
+  },
 ];
 
 describe('GrammarSidebar', () => {

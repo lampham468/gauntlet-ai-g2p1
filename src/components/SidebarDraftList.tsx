@@ -5,8 +5,8 @@ import type React from "react"
 import { FileText, Clock, Search, Plus, Trash2, TrashIcon } from "lucide-react"
 import { useState } from "react"
 
-// Local interface to match the store's Draft interface
-interface Draft {
+// Local interface to match the store's Draft interface - currently not used but kept for type safety
+interface _Draft {
   id: string
   title: string
   content: string

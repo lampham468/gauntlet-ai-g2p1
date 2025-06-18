@@ -26,6 +26,7 @@ class SpellChecker {
   private dictionary: Set<string> = new Set();
   private commonMisspellings: Map<string, string[]> = new Map();
   private isLoading = false;
+  private affixRules: Map<string, { pattern: string; replacement: string; condition: string }[]> = new Map();
 
   constructor() {
     this.initialize();
@@ -238,7 +239,7 @@ class SpellChecker {
     if (/^-?\d+(\.\d+)?%?$/.test(word)) return true;
     
     // Dates (various formats: 2024, 12/25/2024, 2024-12-25, etc.)
-    if (/^\d{1,4}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(word)) return true;
+    if (/^\d{1,4}[/.-]\d{1,2}[/.-]\d{2,4}$/.test(word)) return true;
     if (/^\d{4}$/.test(word) && parseInt(word) > 1800 && parseInt(word) < 2100) return true;
     
     // Times (12:30, 9:00 AM, etc.)
@@ -372,7 +373,7 @@ class SpellChecker {
 
     const errors: SpellCheckError[] = [];
     // Match words, numbers, emails, URLs, and other text patterns
-    const wordRegex = /\b\w+(?:['\-]\w+)*\b/g;
+    const wordRegex = /\b\w+(?:['–]\w+)*\b/g;
     let match;
 
     while ((match = wordRegex.exec(text)) !== null) {
@@ -414,6 +415,48 @@ class SpellChecker {
 
   getMisspellingsCount(): number {
     return this.commonMisspellings.size;
+  }
+
+  private parseAffixData(lines: string[]): void {
+    let currentPrefix = ''
+    
+    for (const line of lines) {
+      if (line.startsWith('SFX') || line.startsWith('PFX')) {
+        const parts = line.split(/\s+/)
+        if (parts.length >= 4) {
+          currentPrefix = parts[1]
+          // Fix regex patterns - remove unnecessary escapes
+          const pattern = parts[2] === '0' ? '' : parts[2].replace(/\\(.)/g, '$1')
+          const replacement = parts[3] === '0' ? '' : parts[3]
+          
+          if (!this.affixRules.has(currentPrefix)) {
+            this.affixRules.set(currentPrefix, [])
+          }
+          
+          this.affixRules.get(currentPrefix)!.push({
+            pattern,
+            replacement,
+            condition: parts[4] || '.'
+          })
+        }
+      }
+    }
+  }
+
+  private parseHunspellRule(ruleString: string): { remove: string; add: string; condition: string } {
+    // Parse Hunspell affix rules with proper regex handling
+    const parts = ruleString.split('/')
+    const mainPart = parts[0]
+    
+    // Handle removal and addition patterns - fix escape characters
+    const removePattern = mainPart.includes('-') ? mainPart.split('-')[0] : ''
+    const addPattern = mainPart.includes('+') ? mainPart.split('+')[1] : mainPart
+    
+    return {
+      remove: removePattern.replace(/\\(.)/g, '$1'), // Remove unnecessary escapes
+      add: addPattern.replace(/\\(.)/g, '$1'), // Remove unnecessary escapes  
+      condition: parts[1] || '.*'
+    }
   }
 }
 
